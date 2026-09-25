@@ -15,7 +15,7 @@ function App() {
   useEffect(() => {
     const checkHealth = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/health`);
+        const res = await axios.get(`${API_URL}/health`);
         setHealth(res.data);
       } catch (err) {
         console.error('Health check failed:', err);
@@ -30,7 +30,7 @@ function App() {
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const res = await axios.get(`${API_URL}/api/users`);
+      const res = await axios.get(`${API_URL}/users`);
       setUsers(res.data.data ?? []);
       setError(null);
     } catch (err) {
@@ -46,7 +46,7 @@ function App() {
     const loadUsers = async () => {
       try {
         setLoading(true);
-        const res = await axios.get(`${API_URL}/api/users`);
+        const res = await axios.get(`${API_URL}/users`);
 
         if (isMounted) {
           setUsers(res.data.data ?? []);
@@ -75,9 +75,9 @@ function App() {
     e.preventDefault();
     try {
       if (editingUserId) {
-        await axios.put(`${API_URL}/api/users/${editingUserId}`, formData);
+        await axios.put(`${API_URL}/users/${editingUserId}`, formData);
       } else {
-        await axios.post(`${API_URL}/api/users`, formData);
+        await axios.post(`${API_URL}/users`, formData);
       }
 
       resetForm();
@@ -101,7 +101,7 @@ function App() {
   // Delete User
   const handleDelete = async (id) => {
     try {
-      await axios.delete(`${API_URL}/api/users/${id}`);
+      await axios.delete(`${API_URL}/users/${id}`);
       await fetchUsers();
     } catch (err) {
       setError('Failed to delete user: ' + (err.response?.data?.error || err.message));
