@@ -79,7 +79,7 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
           ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-          ssh -i /tmp/ec2_key \
+          ssh -vvv -i /tmp/ec2_key \
             -o IdentitiesOnly=yes \
             -o StrictHostKeyChecking=yes \
             "$EC2_USERNAME@$EC2_HOST" \
