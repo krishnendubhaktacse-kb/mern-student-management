@@ -62,12 +62,20 @@ jobs:
       - name: Verify AWS Identity
         run: aws sts get-caller-identity
 
+      - name: Verify SSH Key
+        env:
+          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+        run: |
+          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > /tmp/ec2_key
+          chmod 600 /tmp/ec2_key
+          ssh-keygen -lf /tmp/ec2_key
+
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
-          key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          key_path: /tmp/ec2_key
           script: |
             set -e
 
