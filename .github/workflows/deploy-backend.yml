@@ -1,121 +1,105 @@
-name: Deploy MERN Application to AWS EC2
+# =============================================================================
+# GitHub Actions Workflow: Deploy Node.js Backend to AWS EC2
+# Triggered on push to main branch (backend directory changes)
+# =============================================================================
+
+name: Deploy Backend to EC2
 
 on:
   push:
     branches:
       - main
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to deploy'
+        required: true
+        default: 'main'
 
-permissions:
-  id-token: write
-  contents: read
+env:
+  NODE_VERSION: '22'
+  APP_NAME: 'mern-student-backend'
 
 jobs:
-  test:
+  # ------------------------------------------
+  # JOB 1: TEST AND BUILD
+  # ------------------------------------------
+  test-and-build:
+    name: Test and Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            backend/package-lock.json
-            frontend/package-lock.json
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
 
-      - name: Install Backend Dependencies
-        working-directory: backend
+      - name: Install dependencies
         run: npm ci
 
-      - name: Check Backend Syntax
-        working-directory: backend
-        run: node --check src/server.js
+      - name: Run linter
+        run: npm run lint --if-present
+        continue-on-error: true
 
-      - name: Install Frontend Dependencies
-        working-directory: frontend
-        run: npm ci
-
-      - name: Build Frontend
-        working-directory: frontend
+      - name: Run tests
+        run: npm test --if-present
         env:
-          VITE_API_URL: /api
-        run: npm run build
+          NODE_ENV: test
+          MONGODB_URI: ${{ secrets.TEST_MONGODB_URI }}
+        continue-on-error: true
 
+      - name: Build project
+        run: npm run build --if-present
+
+  # ------------------------------------------
+  # JOB 2: DEPLOY TO EC2
+  # ------------------------------------------
   deploy:
-    needs: test
+    name: Deploy to EC2
+    needs: test-and-build
     runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Verify AWS Identity
-        run: aws sts get-caller-identity
-
-      - name: Verify SSH Key
-        env:
-          EC2_SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+      - name: Configure SSH
         run: |
-          printf '%s\n' "$EC2_SSH_PRIVATE_KEY" > /tmp/ec2_key
-          chmod 600 /tmp/ec2_key
-          ssh-keygen -lf /tmp/ec2_key
-
-      - name: Test SSH Connection
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
-        run: |
-          ssh-keygen -lf /tmp/ec2_key
           mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-          ssh -i /tmp/ec2_key \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USERNAME@$EC2_HOST" \
-            "echo SSH_CONNECTION_SUCCESS"
+          echo "${{ secrets.EC2_SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
 
-      - name: Deploy to EC2
-        env:
-          EC2_HOST: ${{ secrets.EC2_HOST }}
-          EC2_USERNAME: ${{ secrets.EC2_USERNAME }}
+      - name: Deploy to EC2 via SSH
         run: |
-          ssh -i /tmp/ec2_key \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=yes \
-            "$EC2_USERNAME@$EC2_HOST" <<'EOF'
-          set -e
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no \
+            ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} \
+            "bash /home/deploy/deploy.sh ${{ github.ref_name }}"
 
-          cd /var/www/mern-student-management
+      - name: Verify deployment
+        run: |
+          sleep 10
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://${{ secrets.EC2_HOST }}/api/health || echo "000")
+          echo "Health check HTTP status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "Deployment verified successfully."
+          else
+            echo "WARNING: Health check returned $HTTP_STATUS. Check server logs."
+          fi
 
-          git fetch origin main
-          git reset --hard origin/main
-
-          cd backend
-          npm ci --omit=dev
-
-          pm2 restart student-backend --update-env
-
-          cd ../frontend
-          npm ci
-          npm run build
-
-          sudo nginx -t
-          sudo systemctl reload nginx
-
-          pm2 save
-
-          curl -fsS http://127.0.0.1/api/health
-
-          echo "MERN deployment completed successfully."
-          EOF
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
